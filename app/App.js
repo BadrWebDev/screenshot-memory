@@ -1,61 +1,59 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, FlatList, Image, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { useEffect, useState } from 'react';
-import { getScreenshots } from './src/services/api';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+
+import OnboardingScreen from './src/screens/OnboardingScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import DetailScreen from './src/screens/DetailScreen';
+import { getHasOnboarded } from './src/utils/storage';
+import { registerScreenshotWatcher } from './src/tasks/screenshotWatcher';
+import { colors } from './src/theme';
+
+const Stack = createNativeStackNavigator();
 
 export default function App() {
-  const [screenshots, setScreenshots] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const [initialRoute, setInitialRoute] = useState(null); // null = loading
 
   useEffect(() => {
-    fetchScreenshots();
+    (async () => {
+      const hasOnboarded = await getHasOnboarded();
+      setInitialRoute(hasOnboarded ? 'Home' : 'Onboarding');
+      // Attempt to register background watcher (no-op if permission not granted)
+      await registerScreenshotWatcher();
+    })();
   }, []);
 
-  const fetchScreenshots = async () => {
-    try {
-      const data = await getScreenshots();
-      console.log('API response:', JSON.stringify(data));
-      setScreenshots(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.log('Error fetching:', err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderItem = ({ item }) => (
-    <View style={styles.card}>
-      <Text style={styles.category}>{item.category}</Text>
-      <Text style={styles.summary}>{item.summary}</Text>
-      <Text style={styles.date}>{new Date(item.created_at).toLocaleDateString()}</Text>
-    </View>
-  );
+  // Splash-style loading state while checking AsyncStorage
+  if (!initialRoute) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <StatusBar style="light" />
+        <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
+    <NavigationContainer>
       <StatusBar style="light" />
-      <Text style={styles.title}>Memory</Text>
-      {loading ? (
-        <ActivityIndicator size="large" color="#fff" />
-      ) : (
-        <FlatList
-          data={screenshots}
-          keyExtractor={(item) => item.id}
-          renderItem={renderItem}
-          contentContainerStyle={{ padding: 16 }}
-          ListEmptyComponent={<Text style={styles.empty}>No screenshots yet</Text>}
+      <Stack.Navigator
+        initialRouteName={initialRoute}
+        screenOptions={{ headerShown: false, animation: 'fade_from_bottom' }}
+      >
+        <Stack.Screen name="Onboarding" component={OnboardingScreen} />
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ animation: 'fade' }}
         />
-      )}
-    </View>
+        <Stack.Screen
+          name="Detail"
+          component={DetailScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#0f0f0f', paddingTop: 60 },
-  title: { fontSize: 28, fontWeight: 'bold', color: '#fff', paddingHorizontal: 16, marginBottom: 16 },
-  card: { backgroundColor: '#1a1a1a', borderRadius: 12, padding: 16, marginBottom: 12 },
-  category: { fontSize: 11, color: '#888', textTransform: 'uppercase', marginBottom: 4 },
-  summary: { fontSize: 15, color: '#fff', lineHeight: 22 },
-  date: { fontSize: 12, color: '#555', marginTop: 8 },
-  empty: { color: '#555', textAlign: 'center', marginTop: 40 },
-});

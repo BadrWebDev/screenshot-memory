@@ -25,7 +25,7 @@ class GeminiService
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $this->apiKey,
             'Content-Type' => 'application/json',
-        ])->post($this->apiUrl, [
+        ])->timeout(120)->post($this->apiUrl, [
             'model' => 'nvidia/nemotron-nano-12b-v2-vl:free',
             'messages' => [[
                 'role' => 'user',
@@ -39,7 +39,17 @@ class GeminiService
         ]);
 
         $text = $response->json('choices.0.message.content');
-        \Log::info('OpenRouter response: ' . json_encode($response->json()));
+        
+        if (!$text) {
+            \Log::error('OpenRouter failed to return content. Full response: ' . $response->body());
+            return [];
+        }
+
+        // Strip markdown backticks if present
+        $text = preg_replace('/^```(?:json)?\s*/i', '', $text);
+        $text = preg_replace('/\s*```$/', '', $text);
+        
+        \Log::info('OpenRouter response text: ' . $text);
         return json_decode($text, true) ?? [];
     }
 }
