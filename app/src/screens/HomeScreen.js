@@ -9,7 +9,10 @@ import {
   Alert,
   RefreshControl,
   StatusBar,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 import { getScreenshots, uploadScreenshot, deleteScreenshot } from '../services/api';
@@ -18,18 +21,31 @@ import ScreenshotCard from '../components/ScreenshotCard';
 import CategoryPill from '../components/CategoryPill';
 import SearchBar from '../components/SearchBar';
 import FAB from '../components/FAB';
-import { colors, spacing, CATEGORIES } from '../theme';
+import { colors, spacing, typography, radius, CATEGORIES } from '../theme';
+
+const logoSource = require('../../assets/icon.png');
 import { getLastChecked, setLastChecked } from '../utils/storage';
 
 let isSyncing = false;
 
 const HomeScreen = ({ navigation }) => {
-  const { screenshots, loading, uploading, setScreenshots, addScreenshot, removeScreenshot, setLoading, setUploading } =
-    useScreenshotStore();
+  const {
+    screenshots,
+    favorites,
+    loading,
+    uploading,
+    setScreenshots,
+    addScreenshot,
+    removeScreenshot,
+    setLoading,
+    setUploading,
+    toggleFavorite,
+  } = useScreenshotStore();
+  const insets = useSafeAreaInsets();
 
   const [activeCategory, setActiveCategory] = useState('All');
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchVisible] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
@@ -56,9 +72,8 @@ const HomeScreen = ({ navigation }) => {
           album,
           mediaType: MediaLibrary.MediaType.photo,
           sortBy: [[MediaLibrary.SortBy.creationTime, false]],
-          first: 10,
+          first: 15,
         });
-
         // creationTime might be in seconds or milliseconds depending on OS/Expo version
         const newAssets = assets.filter((a) => {
           const assetTime = a.creationTime < 9999999999 ? a.creationTime * 1000 : a.creationTime;
@@ -67,10 +82,15 @@ const HomeScreen = ({ navigation }) => {
 
         if (newAssets.length === 0) return;
 
-        // Update timestamp first to avoid double-uploads
-        await setLastChecked(now);
-        
+        // Find the maximum creation time among newAssets
+        let maxTime = lastChecked;
+        newAssets.forEach(a => {
+            const assetTime = a.creationTime < 9999999999 ? a.creationTime * 1000 : a.creationTime;
+            if (assetTime > maxTime) maxTime = assetTime;
+        });
+
         setUploading(true);
+        let successCount = 0;
 
         for (let i = newAssets.length - 1; i >= 0; i--) {
           const asset = newAssets[i];
@@ -79,9 +99,15 @@ const HomeScreen = ({ navigation }) => {
             const uri = info.localUri || info.uri;
             const result = await uploadScreenshot(uri);
             addScreenshot(result.data ?? result);
+            successCount++;
           } catch (e) {
             console.log('[AutoDetect] Upload failed:', e.message);
           }
+        }
+
+        // Only update lastChecked if we successfully processed at least one
+        if (successCount > 0) {
+            await setLastChecked(maxTime);
         }
       } catch (e) {
         console.log('[AutoDetect] Sync error:', e.message);
@@ -157,99 +183,144 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [removeScreenshot]);
 
+  const normalizeTags = (tags) => {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags.filter(Boolean);
+    if (typeof tags === 'string') {
+      try {
+        const parsed = JSON.parse(tags);
+        if (Array.isArray(parsed)) {
+          return parsed.filter(Boolean);
+        }
+      } catch {}
+      return tags.split(',').map((t) => t.trim()).filter(Boolean);
+    }
+    return [];
+  };
+
   // Filter logic
   const filtered = screenshots.filter((s) => {
     const matchCategory = activeCategory === 'All' || s.category === activeCategory;
     const q = searchQuery.toLowerCase();
+    const tagText = normalizeTags(s.tags).join(' ').toLowerCase();
     const matchSearch =
       !q ||
       (s.summary && s.summary.toLowerCase().includes(q)) ||
       (s.extracted_text && s.extracted_text.toLowerCase().includes(q)) ||
-      (s.category && s.category.toLowerCase().includes(q));
+      (s.category && s.category.toLowerCase().includes(q)) ||
+      tagText.includes(q);
     return matchCategory && matchSearch;
   });
 
-  const renderItem = ({ item }) => (
-    <ScreenshotCard
-      item={item}
-      onPress={() => navigation.navigate('Detail', { screenshot: item })}
-      onDelete={handleDelete}
-    />
+  const renderItem = ({ item, index }) => (
+    <View
+      style={[
+        styles.gridItem,
+        index % 2 === 0 ? styles.gridItemLeft : styles.gridItemRight,
+      ]}
+    >
+      <ScreenshotCard
+        item={item}
+        onPress={() => navigation.navigate('Detail', { screenshot: item })}
+        onDelete={handleDelete}
+        isStarred={favorites.includes(item.id)}
+        onToggleStar={toggleFavorite}
+      />
+    </View>
   );
 
+  const headerHeight = 56 + insets.top;
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
       <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
 
       {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Memory</Text>
-        <TouchableOpacity
-          style={styles.searchToggle}
-          onPress={() => {
-            setSearchVisible((v) => !v);
-            if (searchVisible) setSearchQuery('');
-          }}
-        >
-          <View style={styles.searchIcon}>
-            <View style={styles.searchCircle} />
-            <View style={styles.searchHandle} />
+      <View style={[styles.header, { paddingTop: insets.top, height: headerHeight }]}>
+        <View style={styles.brandRow}>
+          <View style={styles.avatar}>
+            <Image source={logoSource} style={styles.avatarImage} />
           </View>
-        </TouchableOpacity>
+          <Text style={styles.title}>Memory</Text>
+        </View>
       </View>
-
-      {/* Search bar */}
-      <SearchBar
-        visible={searchVisible}
-        value={searchQuery}
-        onChangeText={setSearchQuery}
-        onClear={() => setSearchQuery('')}
-      />
-
-      {/* Category pills */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.pillsScroll}
-        contentContainerStyle={styles.pillsContent}
-      >
-        {CATEGORIES.map((cat) => (
-          <CategoryPill
-            key={cat}
-            label={cat}
-            active={activeCategory === cat}
-            onPress={() => setActiveCategory(cat)}
-          />
-        ))}
-      </ScrollView>
-
-      {/* Results count */}
-      {(searchQuery || activeCategory !== 'All') && (
-        <Text style={styles.resultCount}>
-          {filtered.length} result{filtered.length !== 1 ? 's' : ''}
-        </Text>
-      )}
 
       {/* Feed */}
       <FlatList
         data={filtered}
         keyExtractor={(item) => String(item.id)}
         renderItem={renderItem}
-        contentContainerStyle={styles.listContent}
+        numColumns={2}
+        contentContainerStyle={[
+          styles.listContent,
+          { paddingTop: Math.max(0, headerHeight - spacing.sm) },
+        ]}
+        columnWrapperStyle={styles.columnWrapper}
         showsVerticalScrollIndicator={false}
+        ListHeaderComponent={
+          <View style={styles.listHeader}>
+            {/* Search bar */}
+            <SearchBar
+              visible={searchVisible}
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+              onClear={() => setSearchQuery('')}
+            />
+
+            {/* Category pills */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.pillsScroll}
+              contentContainerStyle={styles.pillsContent}
+            >
+              {CATEGORIES.map((cat) => (
+                <CategoryPill
+                  key={cat}
+                  label={cat}
+                  active={activeCategory === cat}
+                  onPress={() => setActiveCategory(cat)}
+                />
+              ))}
+            </ScrollView>
+            {/* Results count */}
+            {(searchQuery || activeCategory !== 'All') && (
+              <Text style={styles.resultCount}>
+                {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+              </Text>
+            )}
+          </View>
+        }
+        ListHeaderComponentStyle={styles.listHeader}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
             onRefresh={onRefresh}
-            tintColor={colors.accent}
-            colors={[colors.accent]}
+            tintColor={colors.text}
+            colors={[colors.text]}
+            progressBackgroundColor={colors.bg}
+            progressViewOffset={headerHeight}
           />
         }
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
-            <Text style={styles.emptyEmoji}>
-              {loading ? '⏳' : '📭'}
-            </Text>
+            <View style={styles.emptyIconBase}>
+              {loading ? (
+                <ActivityIndicator color={colors.text} size="small" />
+              ) : searchQuery ? (
+                <View style={styles.emptySearchIcon}>
+                  <View style={styles.emptySearchCircle} />
+                  <View style={styles.emptySearchHandle} />
+                </View>
+              ) : (
+                <View style={styles.emptyStackIcon}>
+                  <View style={styles.emptyStackBack} />
+                  <View style={styles.emptyStackFront} />
+                  <View style={styles.emptyStackPlusV} />
+                  <View style={styles.emptyStackPlusH} />
+                </View>
+              )}
+            </View>
             <Text style={styles.emptyTitle}>
               {loading ? 'Loading…' : searchQuery ? 'No results found' : 'No screenshots yet'}
             </Text>
@@ -262,7 +333,7 @@ const HomeScreen = ({ navigation }) => {
 
       {/* FAB */}
       <FAB onPress={handleUpload} loading={uploading} />
-    </View>
+    </SafeAreaView>
   );
 };
 
@@ -272,89 +343,175 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
   },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xl + spacing.md,
-    paddingBottom: spacing.md,
-  },
-  title: {
-    fontSize: 32,
-    fontWeight: '800',
-    color: colors.text,
-    letterSpacing: -0.8,
-  },
-  searchToggle: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.card,
-    borderWidth: 1,
-    borderColor: colors.cardBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchIcon: {
-    width: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  searchCircle: {
-    width: 11,
-    height: 11,
-    borderRadius: 6,
-    borderWidth: 1.8,
-    borderColor: colors.textSecondary,
     position: 'absolute',
     top: 0,
     left: 0,
-  },
-  searchHandle: {
-    width: 6,
-    height: 1.8,
-    backgroundColor: colors.textSecondary,
-    borderRadius: 2,
-    position: 'absolute',
-    bottom: 1,
     right: 0,
-    transform: [{ rotate: '45deg' }],
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.marginMain,
+    paddingBottom: spacing.sm,
+    backgroundColor: colors.navBg,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.cardBorder,
+    zIndex: 20,
+    elevation: 12,
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  avatar: {
+    width: 32,
+    height: 32,
+    borderRadius: radius.full,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+  },
+  title: {
+    fontSize: typography.headline1.fontSize,
+    fontFamily: typography.headline1.fontFamily,
+    color: colors.text,
+    letterSpacing: typography.headline1.letterSpacing,
   },
   pillsScroll: {
     flexGrow: 0,
+    marginHorizontal: -spacing.marginMain,
   },
   pillsContent: {
-    paddingHorizontal: spacing.md,
+    paddingHorizontal: spacing.marginMain,
     paddingBottom: spacing.sm,
   },
   resultCount: {
-    fontSize: 12,
-    color: colors.textSecondary,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.xs,
+    fontSize: typography.labelCaps.fontSize,
+    fontFamily: typography.labelCaps.fontFamily,
+    color: colors.textMuted,
+    paddingHorizontal: spacing.marginMain,
+    marginBottom: spacing.sm,
   },
   listContent: {
-    paddingHorizontal: spacing.md,
-    paddingTop: spacing.xs,
-    paddingBottom: 100,
+    paddingHorizontal: spacing.marginMain,
+    paddingBottom: 160,
+  },
+  listHeader: {
+    width: '100%',
+  },
+  columnWrapper: {
+    justifyContent: 'space-between',
+  },
+  gridItem: {
+    flex: 1,
+  },
+  gridItemLeft: {
+    marginRight: spacing.gutter / 2,
+  },
+  gridItemRight: {
+    marginLeft: spacing.gutter / 2,
   },
   emptyContainer: {
     alignItems: 'center',
     paddingTop: 80,
   },
-  emptyEmoji: {
-    fontSize: 48,
+  emptyIconBase: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: spacing.md,
   },
+  emptySearchIcon: {
+    width: 26,
+    height: 26,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptySearchCircle: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  emptySearchHandle: {
+    width: 8,
+    height: 2,
+    backgroundColor: colors.textMuted,
+    borderRadius: 2,
+    position: 'absolute',
+    bottom: 2,
+    right: 0,
+    transform: [{ rotate: '45deg' }],
+  },
+  emptyStackIcon: {
+    width: 32,
+    height: 28,
+  },
+  emptyStackBack: {
+    position: 'absolute',
+    width: 24,
+    height: 18,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+    top: 0,
+    left: 0,
+    opacity: 0.5,
+  },
+  emptyStackFront: {
+    position: 'absolute',
+    width: 24,
+    height: 18,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.textMuted,
+    bottom: 0,
+    right: 0,
+  },
+  emptyStackPlusV: {
+    position: 'absolute',
+    width: 2,
+    height: 10,
+    backgroundColor: colors.textMuted,
+    right: 2,
+    top: 2,
+    borderRadius: 2,
+  },
+  emptyStackPlusH: {
+    position: 'absolute',
+    width: 10,
+    height: 2,
+    backgroundColor: colors.textMuted,
+    right: -2,
+    top: 6,
+    borderRadius: 2,
+  },
   emptyTitle: {
-    fontSize: 17,
-    fontWeight: '600',
+    fontSize: typography.headline2.fontSize,
+    fontFamily: typography.headline2.fontFamily,
     color: colors.textSecondary,
     marginBottom: spacing.xs,
   },
   emptySubtitle: {
-    fontSize: 14,
+    fontSize: typography.bodySm.fontSize,
+    fontFamily: typography.bodySm.fontFamily,
     color: colors.textMuted,
   },
 });

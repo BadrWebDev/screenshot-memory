@@ -8,11 +8,12 @@ import {
   Alert,
   Animated,
 } from 'react-native';
+import { MaterialIcons } from '@expo/vector-icons';
 import { colors, getCategoryStyle, radius, spacing, typography } from '../theme';
 
-const IMAGE_BASE = 'http://192.168.1.38:8000/storage/';
+const IMAGE_BASE = 'http://192.168.1.39:8000/storage/';
 
-const ScreenshotCard = ({ item, onPress, onDelete }) => {
+const ScreenshotCard = ({ item, onPress, onDelete, isStarred, onToggleStar }) => {
   const scale = useRef(new Animated.Value(1)).current;
 
   const animateIn = () =>
@@ -21,6 +22,7 @@ const ScreenshotCard = ({ item, onPress, onDelete }) => {
     Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
 
   const handleLongPress = () => {
+    if (!onDelete) return;
     Alert.alert(
       'Delete Screenshot',
       'Are you sure you want to delete this screenshot?',
@@ -57,7 +59,7 @@ const ScreenshotCard = ({ item, onPress, onDelete }) => {
         style={styles.card}
         activeOpacity={1}
         onPress={onPress}
-        onLongPress={handleLongPress}
+        onLongPress={onDelete ? handleLongPress : undefined}
         onPressIn={animateIn}
         onPressOut={animateOut}
         delayLongPress={500}
@@ -70,37 +72,34 @@ const ScreenshotCard = ({ item, onPress, onDelete }) => {
             resizeMode="cover"
           />
           {/* Category badge overlaid on thumbnail */}
-          <View style={[styles.badge, { backgroundColor: catStyle.bg }]}>
-            <Text style={[styles.badgeText, { color: catStyle.text }]}>
-              {item.category || 'Other'}
-            </Text>
+          <View style={styles.badgeWrap}>
+            <View style={[styles.badge, { backgroundColor: catStyle.bg, borderColor: catStyle.text + '66' }]}>
+              <Text style={[styles.badgeText, { color: catStyle.text }]}>
+                {item.category || 'Other'}
+              </Text>
+            </View>
           </View>
+          {onToggleStar && (
+            <TouchableOpacity
+              style={styles.bookmarkButton}
+              onPress={() => onToggleStar(item.id)}
+              activeOpacity={0.65}
+            >
+              <MaterialIcons
+                name={isStarred ? 'bookmark' : 'bookmark-outline'}
+                size={24}
+                color="white"
+                style={isStarred ? styles.bookmarkActive : styles.bookmarkInactive}
+              />
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Content */}
         <View style={styles.content}>
-          <Text style={styles.summary} numberOfLines={3}>
-            {item.summary || 'Processing…'}
+          <Text style={styles.summary} numberOfLines={1}>
+            {item.summary || 'Processing...'}
           </Text>
-
-          {/* Tags row */}
-          {item.tags && item.tags.length > 0 && (
-            <View style={styles.tagsRow}>
-              {(Array.isArray(item.tags)
-                ? item.tags
-                : item.tags.split(',')
-              )
-                .slice(0, 3)
-                .map((tag, i) => (
-                  <View key={i} style={styles.tag}>
-                    <Text style={styles.tagText}>
-                      {tag.trim().replace(/^#/, '')}
-                    </Text>
-                  </View>
-                ))}
-            </View>
-          )}
-
           <Text style={styles.date}>{formattedDate}</Text>
         </View>
       </TouchableOpacity>
@@ -110,72 +109,73 @@ const ScreenshotCard = ({ item, onPress, onDelete }) => {
 
 const styles = StyleSheet.create({
   wrapper: {
-    marginBottom: spacing.sm + 4,
+    flex: 1,
+    marginBottom: spacing.gutter,
   },
   card: {
     backgroundColor: colors.card,
-    borderRadius: radius.md,
+    borderRadius: radius.card,
     borderWidth: 1,
     borderColor: colors.cardBorder,
-    flexDirection: 'row',
     overflow: 'hidden',
   },
   thumbnailContainer: {
-    width: 100,
-    height: 110,
+    width: '100%',
+    aspectRatio: 3 / 4,
     position: 'relative',
   },
   thumbnail: {
     width: '100%',
     height: '100%',
-    backgroundColor: colors.inputBg,
+    backgroundColor: colors.surfaceElevated,
   },
   badge: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    right: 6,
-    paddingHorizontal: 4,
-    paddingVertical: 2,
+    paddingHorizontal: spacing.unit * 2,
+    paddingVertical: spacing.unit,
     borderRadius: radius.sm,
     alignItems: 'center',
+    borderWidth: 1,
+  },
+  badgeWrap: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    padding: 2,
+    borderRadius: radius.sm + 2,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
   },
   badgeText: {
     ...typography.badge,
-    fontSize: 9,
+    fontSize: 10,
+  },
+  bookmarkButton: {
+    position: 'absolute',
+    top: spacing.sm,
+    right: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bookmarkInactive: {
+    opacity: 0.4,
+  },
+  bookmarkActive: {
+    opacity: 1,
   },
   content: {
-    flex: 1,
-    padding: spacing.md,
-    justifyContent: 'space-between',
+    paddingHorizontal: spacing.unit * 2,
+    paddingTop: spacing.sm,
+    paddingBottom: spacing.sm,
   },
   summary: {
-    ...typography.body,
-    fontSize: 14,
-    lineHeight: 20,
+    ...typography.headline2,
     color: colors.text,
-    flex: 1,
-  },
-  tagsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 4,
-    marginTop: spacing.xs,
-  },
-  tag: {
-    backgroundColor: colors.accentSoft,
-    borderRadius: radius.full,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-  },
-  tagText: {
-    fontSize: 10,
-    color: colors.accent,
-    fontWeight: '600',
   },
   date: {
     ...typography.caption,
-    marginTop: spacing.xs,
+    color: colors.textMuted,
+    marginTop: spacing.unit,
   },
 });
 

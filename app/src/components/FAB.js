@@ -35,7 +35,7 @@ const FAB = ({ onPress, loading }) => {
         activeOpacity={1}
       >
         {loading ? (
-          <ActivityIndicator color="#fff" size="small" />
+          <ActivityIndicator color={colors.onAccent} size="small" />
         ) : (
           <Text style={styles.plus}>+</Text>
         )}
@@ -47,28 +47,28 @@ const FAB = ({ onPress, loading }) => {
 const styles = StyleSheet.create({
   wrapper: {
     position: 'absolute',
-    bottom: 28,
-    right: 20,
+    bottom: 96,
+    right: 24,
     // Shadow
-    shadowColor: colors.accent,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.5,
-    shadowRadius: 16,
-    elevation: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.35,
+    shadowRadius: 24,
+    elevation: 14,
   },
   button: {
-    width: 60,
-    height: 60,
+    width: 56,
+    height: 56,
     borderRadius: radius.full,
     backgroundColor: colors.accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   plus: {
-    fontSize: 32,
-    color: '#fff',
-    lineHeight: 36,
-    fontWeight: '300',
+    fontSize: 28,
+    color: colors.onAccent,
+    lineHeight: 30,
+    fontWeight: '600',
   },
 });
 

@@ -1,0 +1,1656 @@
+app/App.js:
+import { useEffect, useState } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { View, ActivityIndicator } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+
+import OnboardingScreen from './src/screens/OnboardingScreen';
+import HomeScreen from './src/screens/HomeScreen';
+import DetailScreen from './src/screens/DetailScreen';
+import { getHasOnboarded } from './src/utils/storage';
+import { registerScreenshotWatcher } from './src/tasks/screenshotWatcher';
+import { colors } from './src/theme';
+
+const Stack = createNativeStackNavigator();
+
+export default function App() {
+  const [initialRoute, setInitialRoute] = useState(null); // null = loading
+
+  useEffect(() => {
+    (async () => {
+      const hasOnboarded = await getHasOnboarded();
+      setInitialRoute(hasOnboarded ? 'Home' : 'Onboarding');
+      // Attempt to register background watcher (no-op if permission not granted)
+      await registerScreenshotWatcher();
+    })();
+  }, []);
+
+  // Splash-style loading state while checking AsyncStorage
+  if (!initialRoute) {
+    return (
+      <View style={{ flex: 1, backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center' }}>
+        <StatusBar style="light" />
+        <ActivityIndicator color={colors.accent} size="large" />
+      </View>
+    );
+  }
+
+  return (
+    <NavigationContainer>
+      <StatusBar style="light" />
+      <Stack.Navigator
+        initialRouteName={initialRoute}
+        screenOptions={{ headerShown: false, animation: 'fade_from_bottom' }}
+      >
+        <Stack.Screen name="Onboarding" component={OnboardingScreen} />
+        <Stack.Screen
+          name="Home"
+          component={HomeScreen}
+          options={{ animation: 'fade' }}
+        />
+        <Stack.Screen
+          name="Detail"
+          component={DetailScreen}
+          options={{ animation: 'slide_from_right' }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
+  );
+}
+
+app/src/theme.js:
+// Design tokens — single source of truth for colors, typography, spacing
+
+export const colors = {
+  bg: '#0f0f0f',
+  bgElevated: '#161616',
+  card: '#1a1a1a',
+  cardBorder: '#2a2a2a',
+  accent: '#6C63FF',
+  accentSoft: '#6C63FF22',
+  text: '#ffffff',
+  textSecondary: '#999999',
+  textMuted: '#444444',
+  danger: '#FF4B4B',
+  success: '#4CAF50',
+  inputBg: '#222222',
+  pillActive: '#6C63FF',
+  pillInactive: '#1e1e1e',
+  pillBorderActive: '#6C63FF',
+  pillBorderInactive: '#2a2a2a',
+};
+
+export const categoryColors = {
+  Shopping: { bg: '#1a2744', text: '#6B9EF8' },
+  Food:     { bg: '#1a2e1a', text: '#66BB6A' },
+  Places:   { bg: '#2a1a2e', text: '#CE93D8' },
+  Finance:  { bg: '#2e2a1a', text: '#FFD54F' },
+  Recipes:  { bg: '#2e1a1a', text: '#FF8A65' },
+  Quotes:   { bg: '#1a2e2e', text: '#4DD0E1' },
+  Other:    { bg: '#222222', text: '#AAAAAA' },
+};
+
+export const getCategoryStyle = (category) =>
+  categoryColors[category] || categoryColors.Other;
+
+export const typography = {
+  heading1: { fontSize: 28, fontWeight: '700', color: colors.text, letterSpacing: -0.5 },
+  heading2: { fontSize: 20, fontWeight: '600', color: colors.text },
+  body:     { fontSize: 15, fontWeight: '400', color: colors.text, lineHeight: 22 },
+  caption:  { fontSize: 12, fontWeight: '400', color: colors.textSecondary },
+  badge:    { fontSize: 10, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+};
+
+export const spacing = {
+  xs: 4,
+  sm: 8,
+  md: 16,
+  lg: 24,
+  xl: 32,
+};
+
+export const radius = {
+  sm: 6,
+  md: 12,
+  lg: 16,
+  xl: 24,
+  full: 999,
+};
+
+export const CATEGORIES = ['All', 'Shopping', 'Food', 'Places', 'Finance', 'Recipes', 'Quotes', 'Other'];
+
+
+api/app/Services/GeminiService.php:
+<?php
+
+namespace App\Services;
+
+use Illuminate\Support\Facades\Http;
+
+class GeminiService
+{
+    protected string $apiKey;
+    protected string $apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
+
+    public function __construct()
+    {
+        $this->apiKey = config('services.gemini.key');
+    }
+
+    public function analyzeScreenshot(string $imageBase64, string $mimeType = 'image/jpeg'): array
+    {
+        $prompt = "Analyze this screenshot and return ONLY a valid JSON object with no extra text, no markdown, no backticks. The JSON must have exactly these keys:
+- summary: one sentence describing what this screenshot is about
+- category: one of [Shopping, Food, Places, Recipes, Finance, Quotes, Social, Other]
+- extracted_text: all visible text in the image combined into one string
+- tags: array of 3 to 5 relevant keywords";
+
+        $response = Http::withHeaders([
+            'Authorization' => 'Bearer ' . $this->apiKey,
+            'Content-Type' => 'application/json',
+        ])->timeout(120)->post($this->apiUrl, [
+            'model' => 'nvidia/nemotron-nano-12b-v2-vl:free',
+            'messages' => [[
+                'role' => 'user',
+                'content' => [
+                    ['type' => 'text', 'text' => $prompt],
+                    ['type' => 'image_url', 'image_url' => [
+                        'url' => 'data:' . $mimeType . ';base64,' . $imageBase64
+                    ]]
+                ]
+            ]]
+        ]);
+
+        $text = $response->json('choices.0.message.content');
+        
+        if (!$text) {
+            \Log::error('OpenRouter failed to return content. Full response: ' . $response->body());
+            return [];
+        }
+
+        // Strip markdown backticks if present
+        $text = preg_replace('/^```(?:json)?\s*/i', '', $text);
+        $text = preg_replace('/\s*```$/', '', $text);
+        
+        \Log::info('OpenRouter response text: ' . $text);
+        return json_decode($text, true) ?? [];
+    }
+}
+
+api/app/Http/Controllers/ScreenshotController.php:
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Screenshot;
+use App\Services\GeminiService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Str;
+
+class ScreenshotController extends Controller
+{
+    protected GeminiService $gemini;
+
+    public function __construct(GeminiService $gemini)
+    {
+        $this->gemini = $gemini;
+    }
+
+    public function index()
+    {
+        return response()->json(
+            Screenshot::latest()->get()
+        );
+    }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'image' => 'required|image|max:10240',
+        ]);
+
+        $file = $request->file('image');
+        $base64 = base64_encode(file_get_contents($file->getRealPath()));
+        $mimeType = $file->getMimeType();
+
+        $path = $file->store('screenshots', 'public');
+
+        $analysis = $this->gemini->analyzeScreenshot($base64, $mimeType);
+
+        $screenshot = Screenshot::create([
+            'id'             => Str::uuid(),
+            'image_url'      => $path,
+            'summary'        => $analysis['summary'] ?? null,
+            'category'       => $analysis['category'] ?? 'Other',
+            'extracted_text' => $analysis['extracted_text'] ?? null,
+            'tags'           => $analysis['tags'] ?? [],
+        ]);
+
+        return response()->json($screenshot, 201);
+    }
+
+    public function show(Screenshot $screenshot)
+    {
+        return response()->json($screenshot);
+    }
+
+    public function destroy(Screenshot $screenshot)
+    {
+        $screenshot->delete();
+        return response()->json(['message' => 'Deleted']);
+    }
+}
+
+app/src/screens/OnboardingScreen.js:
+import React, { useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Animated,
+  Dimensions,
+  Alert,
+} from 'react-native';
+import * as MediaLibrary from 'expo-media-library';
+import { colors, radius, spacing } from '../theme';
+import { setHasOnboarded } from '../utils/storage';
+
+const { width, height } = Dimensions.get('window');
+
+const FEATURES = [
+  { icon: '🖼️', title: 'Auto-Organizes', desc: 'AI reads every screenshot and sorts it by category automatically.' },
+  { icon: '🔍', title: 'Searchable', desc: 'Find any screenshot instantly by searching its content or tags.' },
+  { icon: '✨', title: 'Smart Summaries', desc: 'See a one-line summary of each screenshot without opening it.' },
+];
+
+const OnboardingScreen = ({ navigation }) => {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(40)).current;
+  const buttonScale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, { toValue: 1, duration: 800, useNativeDriver: true }),
+      Animated.spring(slideAnim, { toValue: 0, damping: 20, useNativeDriver: true }),
+    ]).start();
+  }, []);
+
+  const handleAllow = async () => {
+    const { status } = await MediaLibrary.requestPermissionsAsync();
+    if (status === 'granted') {
+      await setHasOnboarded();
+      navigation.replace('Home');
+    } else {
+      Alert.alert(
+        'Permission Required',
+        'Screenshot Memory needs photo library access to detect and organize your screenshots. Please enable it in Settings.',
+        [
+          { text: 'Skip for Now', onPress: async () => { await setHasOnboarded(); navigation.replace('Home'); } },
+          { text: 'OK' },
+        ]
+      );
+    }
+  };
+
+  const animIn = () =>
+    Animated.spring(buttonScale, { toValue: 0.95, useNativeDriver: true }).start();
+  const animOut = () =>
+    Animated.spring(buttonScale, { toValue: 1, useNativeDriver: true }).start();
+
+  return (
+    <View style={styles.container}>
+      {/* Background orb decorations */}
+      <View style={styles.orb1} />
+      <View style={styles.orb2} />
+
+      <Animated.View
+        style={[
+          styles.content,
+          { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+        ]}
+      >
+        {/* Logo / Icon area */}
+        <View style={styles.logoContainer}>
+          <Text style={styles.logoEmoji}>📸</Text>
+          <View style={styles.logoBadge}>
+            <Text style={styles.logoBadgeText}>AI</Text>
+          </View>
+        </View>
+
+        <Text style={styles.title}>Screenshot{'\n'}Memory</Text>
+        <Text style={styles.subtitle}>
+          Your screenshots, automatically organized{'\n'}and made searchable with AI.
+        </Text>
+
+        {/* Feature list */}
+        <View style={styles.features}>
+          {FEATURES.map((f, i) => (
+            <View key={i} style={styles.featureRow}>
+              <View style={styles.featureIcon}>
+                <Text style={styles.featureEmoji}>{f.icon}</Text>
+              </View>
+              <View style={styles.featureText}>
+                <Text style={styles.featureTitle}>{f.title}</Text>
+                <Text style={styles.featureDesc}>{f.desc}</Text>
+              </View>
+            </View>
+          ))}
+        </View>
+
+        {/* CTA Button */}
+        <Animated.View style={{ transform: [{ scale: buttonScale }], width: '100%' }}>
+          <TouchableOpacity
+            style={styles.button}
+            onPress={handleAllow}
+            onPressIn={animIn}
+            onPressOut={animOut}
+            activeOpacity={1}
+          >
+            <Text style={styles.buttonText}>Allow Photo Access</Text>
+          </TouchableOpacity>
+        </Animated.View>
+
+        <Text style={styles.legalNote}>
+          Used only to detect new screenshots.{'\n'}Nothing is shared without your knowledge.
+        </Text>
+      </Animated.View>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  orb1: {
+    position: 'absolute',
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    backgroundColor: colors.accent,
+    opacity: 0.08,
+    top: -80,
+    right: -80,
+  },
+  orb2: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    borderRadius: 100,
+    backgroundColor: '#9C27B0',
+    opacity: 0.06,
+    bottom: 40,
+    left: -60,
+  },
+  content: {
+    paddingHorizontal: spacing.xl,
+    alignItems: 'center',
+    width: '100%',
+  },
+  logoContainer: {
+    width: 90,
+    height: 90,
+    borderRadius: 24,
+    backgroundColor: colors.accentSoft,
+    borderWidth: 1,
+    borderColor: colors.accent + '44',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xl,
+    position: 'relative',
+  },
+  logoEmoji: {
+    fontSize: 42,
+  },
+  logoBadge: {
+    position: 'absolute',
+    bottom: -8,
+    right: -8,
+    backgroundColor: colors.accent,
+    borderRadius: radius.sm,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderWidth: 2,
+    borderColor: colors.bg,
+  },
+  logoBadgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  title: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: colors.text,
+    textAlign: 'center',
+    letterSpacing: -1,
+    lineHeight: 46,
+    marginBottom: spacing.md,
+  },
+  subtitle: {
+    fontSize: 16,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: spacing.xl + 8,
+  },
+  features: {
+    width: '100%',
+    marginBottom: spacing.xl + 8,
+    gap: spacing.md,
+  },
+  featureRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: spacing.md,
+  },
+  featureIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: radius.md,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureEmoji: {
+    fontSize: 22,
+  },
+  featureText: {
+    flex: 1,
+    paddingTop: 2,
+  },
+  featureTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 2,
+  },
+  featureDesc: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  button: {
+    backgroundColor: colors.accent,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md + 2,
+    alignItems: 'center',
+    marginBottom: spacing.md,
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+  buttonText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  legalNote: {
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+});
+
+export default OnboardingScreen;
+
+
+app/src/screens/HomeScreen.js:
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  View,
+  Text,
+  FlatList,
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  Alert,
+  RefreshControl,
+  StatusBar,
+} from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import * as MediaLibrary from 'expo-media-library';
+import { getScreenshots, uploadScreenshot, deleteScreenshot } from '../services/api';
+import useScreenshotStore from '../store/useScreenshotStore';
+import ScreenshotCard from '../components/ScreenshotCard';
+import CategoryPill from '../components/CategoryPill';
+import SearchBar from '../components/SearchBar';
+import FAB from '../components/FAB';
+import { colors, spacing, CATEGORIES } from '../theme';
+import { getLastChecked, setLastChecked } from '../utils/storage';
+
+let isSyncing = false;
+
+const HomeScreen = ({ navigation }) => {
+  const { screenshots, loading, uploading, setScreenshots, addScreenshot, removeScreenshot, setLoading, setUploading } =
+    useScreenshotStore();
+
+  const [activeCategory, setActiveCategory] = useState('All');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  useEffect(() => {
+    fetchScreenshots();
+  }, []);
+
+  // Real-time screenshot detection — fires on mount and when new photos are added
+  useEffect(() => {
+    let subscription;
+
+    const syncScreenshots = async () => {
+      if (isSyncing) return;
+      isSyncing = true;
+
+      try {
+        // Find the Screenshots album
+        const album = await MediaLibrary.getAlbumAsync('Screenshots');
+        if (!album) return;
+
+        const lastChecked = await getLastChecked();
+        const now = Date.now();
+
+        const { assets } = await MediaLibrary.getAssetsAsync({
+          album,
+          mediaType: MediaLibrary.MediaType.photo,
+          sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+          first: 10,
+        });
+
+        // creationTime might be in seconds or milliseconds depending on OS/Expo version
+        const newAssets = assets.filter((a) => {
+          const assetTime = a.creationTime < 9999999999 ? a.creationTime * 1000 : a.creationTime;
+          return assetTime > lastChecked;
+        });
+
+        if (newAssets.length === 0) return;
+
+        // Update timestamp first to avoid double-uploads
+        await setLastChecked(now);
+        
+        setUploading(true);
+
+        for (let i = newAssets.length - 1; i >= 0; i--) {
+          const asset = newAssets[i];
+          try {
+            const info = await MediaLibrary.getAssetInfoAsync(asset);
+            const uri = info.localUri || info.uri;
+            const result = await uploadScreenshot(uri);
+            addScreenshot(result.data ?? result);
+          } catch (e) {
+            console.log('[AutoDetect] Upload failed:', e.message);
+          }
+        }
+      } catch (e) {
+        console.log('[AutoDetect] Sync error:', e.message);
+      } finally {
+        setUploading(false);
+        isSyncing = false;
+      }
+    };
+
+    const startWatching = async () => {
+      const { status } = await MediaLibrary.getPermissionsAsync();
+      if (status !== 'granted') return;
+
+      // Sync existing screenshots right away on launch
+      await syncScreenshots();
+
+      // Listen for any new screenshots taken while app is open
+      subscription = MediaLibrary.addListener(syncScreenshots);
+    };
+
+    startWatching();
+    return () => subscription?.remove();
+  }, [addScreenshot, setUploading]);
+
+  const fetchScreenshots = async () => {
+    setLoading(true);
+    try {
+      const data = await getScreenshots();
+      setScreenshots(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.log('Fetch error:', err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    try {
+      const data = await getScreenshots();
+      setScreenshots(Array.isArray(data) ? data : []);
+    } catch {}
+    setRefreshing(false);
+  };
+
+  const handleUpload = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: false,
+      quality: 0.9,
+    });
+
+    if (result.canceled) return;
+
+    const uri = result.assets[0].uri;
+    setUploading(true);
+    try {
+      const newScreenshot = await uploadScreenshot(uri);
+      addScreenshot(newScreenshot.data ?? newScreenshot);
+    } catch (err) {
+      Alert.alert('Upload Failed', err.message || 'Could not upload screenshot.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDelete = useCallback(async (id) => {
+    try {
+      await deleteScreenshot(id);
+      removeScreenshot(id);
+    } catch (err) {
+      Alert.alert('Error', 'Could not delete screenshot.');
+    }
+  }, [removeScreenshot]);
+
+  // Filter logic
+  const filtered = screenshots.filter((s) => {
+    const matchCategory = activeCategory === 'All' || s.category === activeCategory;
+    const q = searchQuery.toLowerCase();
+    const matchSearch =
+      !q ||
+      (s.summary && s.summary.toLowerCase().includes(q)) ||
+      (s.extracted_text && s.extracted_text.toLowerCase().includes(q)) ||
+      (s.category && s.category.toLowerCase().includes(q));
+    return matchCategory && matchSearch;
+  });
+
+  const renderItem = ({ item }) => (
+    <ScreenshotCard
+      item={item}
+      onPress={() => navigation.navigate('Detail', { screenshot: item })}
+      onDelete={handleDelete}
+    />
+  );
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" backgroundColor={colors.bg} />
+
+      {/* Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Memory</Text>
+        <TouchableOpacity
+          style={styles.searchToggle}
+          onPress={() => {
+            setSearchVisible((v) => !v);
+            if (searchVisible) setSearchQuery('');
+          }}
+        >
+          <View style={styles.searchIcon}>
+            <View style={styles.searchCircle} />
+            <View style={styles.searchHandle} />
+          </View>
+        </TouchableOpacity>
+      </View>
+
+      {/* Search bar */}
+      <SearchBar
+        visible={searchVisible}
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        onClear={() => setSearchQuery('')}
+      />
+
+      {/* Category pills */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.pillsScroll}
+        contentContainerStyle={styles.pillsContent}
+      >
+        {CATEGORIES.map((cat) => (
+          <CategoryPill
+            key={cat}
+            label={cat}
+            active={activeCategory === cat}
+            onPress={() => setActiveCategory(cat)}
+          />
+        ))}
+      </ScrollView>
+
+      {/* Results count */}
+      {(searchQuery || activeCategory !== 'All') && (
+        <Text style={styles.resultCount}>
+          {filtered.length} result{filtered.length !== 1 ? 's' : ''}
+        </Text>
+      )}
+
+      {/* Feed */}
+      <FlatList
+        data={filtered}
+        keyExtractor={(item) => String(item.id)}
+        renderItem={renderItem}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor={colors.accent}
+            colors={[colors.accent]}
+          />
+        }
+        ListEmptyComponent={
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyEmoji}>
+              {loading ? '⏳' : '📭'}
+            </Text>
+            <Text style={styles.emptyTitle}>
+              {loading ? 'Loading…' : searchQuery ? 'No results found' : 'No screenshots yet'}
+            </Text>
+            <Text style={styles.emptySubtitle}>
+              {!loading && !searchQuery && 'Tap + to add your first screenshot'}
+            </Text>
+          </View>
+        }
+      />
+
+      {/* FAB */}
+      <FAB onPress={handleUpload} loading={uploading} />
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: colors.bg,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xl + spacing.md,
+    paddingBottom: spacing.md,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: '800',
+    color: colors.text,
+    letterSpacing: -0.8,
+  },
+  searchToggle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchIcon: {
+    width: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  searchCircle: {
+    width: 11,
+    height: 11,
+    borderRadius: 6,
+    borderWidth: 1.8,
+    borderColor: colors.textSecondary,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  searchHandle: {
+    width: 6,
+    height: 1.8,
+    backgroundColor: colors.textSecondary,
+    borderRadius: 2,
+    position: 'absolute',
+    bottom: 1,
+    right: 0,
+    transform: [{ rotate: '45deg' }],
+  },
+  pillsScroll: {
+    flexGrow: 0,
+  },
+  pillsContent: {
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  resultCount: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    paddingHorizontal: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  listContent: {
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.xs,
+    paddingBottom: 100,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingTop: 80,
+  },
+  emptyEmoji: {
+    fontSize: 48,
+    marginBottom: spacing.md,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    marginBottom: spacing.xs,
+  },
+  emptySubtitle: {
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+});
+
+export default HomeScreen;
+
+
+app/src/screens/DetailScreen.js:
+import React from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  Image,
+  TouchableOpacity,
+  Dimensions,
+  Alert,
+  StatusBar,
+} from 'react-native';
+import { deleteScreenshot } from '../services/api';
+import useScreenshotStore from '../store/useScreenshotStore';
+import { colors, getCategoryStyle, radius, spacing, typography } from '../theme';
+
+const { width } = Dimensions.get('window');
+const IMAGE_BASE = 'http://192.168.1.38:8000/storage/';
+
+const DetailScreen = ({ route, navigation }) => {
+  const { screenshot } = route.params;
+  const { removeScreenshot } = useScreenshotStore();
+
+  const imageUri = screenshot.image_url?.startsWith('http')
+    ? screenshot.image_url
+    : `${IMAGE_BASE}${screenshot.image_url}`;
+
+  const catStyle = getCategoryStyle(screenshot.category);
+
+  const parseTags = (tags) => {
+    if (!tags) return [];
+    if (Array.isArray(tags)) return tags;
+    try { return JSON.parse(tags); } catch { return tags.split(','); }
+  };
+  const tags = parseTags(screenshot.tags);
+
+  const formattedDate = screenshot.created_at
+    ? new Date(screenshot.created_at).toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+      })
+    : '';
+
+  const handleDelete = () => {
+    Alert.alert('Delete Screenshot', 'This will permanently delete this screenshot.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete', style: 'destructive',
+        onPress: async () => {
+          try {
+            await deleteScreenshot(screenshot.id);
+            removeScreenshot(screenshot.id);
+            navigation.goBack();
+          } catch {
+            Alert.alert('Error', 'Could not delete screenshot.');
+          }
+        },
+      },
+    ]);
+  };
+
+  return (
+    <View style={styles.container}>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.header}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => navigation.goBack()}>
+          <View style={styles.backArrow} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle} numberOfLines={1}>{screenshot.category || 'Detail'}</Text>
+        <TouchableOpacity style={styles.deleteBtn} onPress={handleDelete}>
+          <Text style={styles.deleteBtnText}>Delete</Text>
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.imageContainer}>
+          <Image source={{ uri: imageUri }} style={styles.image} resizeMode="contain" />
+        </View>
+
+        <View style={styles.metaRow}>
+          <View style={[styles.badge, { backgroundColor: catStyle.bg }]}>
+            <Text style={[styles.badgeText, { color: catStyle.text }]}>{screenshot.category || 'Other'}</Text>
+          </View>
+          <Text style={styles.date}>{formattedDate}</Text>
+        </View>
+
+        {screenshot.summary ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>AI Summary</Text>
+            <Text style={styles.summaryText}>{screenshot.summary}</Text>
+          </View>
+        ) : null}
+
+        {tags.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Tags</Text>
+            <View style={styles.tagsWrap}>
+              {tags.map((tag, i) => (
+                <View key={i} style={styles.tag}>
+                  <Text style={styles.tagText}>#{typeof tag === 'string' ? tag.trim().replace(/^#/, '') : tag}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        )}
+
+        {screenshot.extracted_text ? (
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Extracted Text</Text>
+            <View style={styles.extractedBox}>
+              <Text style={styles.extractedText}>{screenshot.extracted_text}</Text>
+            </View>
+          </View>
+        ) : null}
+      </ScrollView>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: colors.bg },
+  header: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingTop: spacing.xl + spacing.md, paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.md, justifyContent: 'space-between',
+  },
+  backBtn: {
+    width: 40, height: 40, borderRadius: 20, backgroundColor: colors.card,
+    borderWidth: 1, borderColor: colors.cardBorder, alignItems: 'center', justifyContent: 'center',
+  },
+  backArrow: {
+    width: 10, height: 10, borderLeftWidth: 2, borderBottomWidth: 2,
+    borderColor: colors.text, transform: [{ rotate: '45deg' }], marginLeft: 4,
+  },
+  headerTitle: { fontSize: 17, fontWeight: '600', color: colors.text, flex: 1, textAlign: 'center', marginHorizontal: spacing.sm },
+  deleteBtn: { paddingHorizontal: 12, paddingVertical: 6, borderRadius: radius.sm, backgroundColor: '#2a1010', borderWidth: 1, borderColor: '#3a1515' },
+  deleteBtnText: { color: colors.danger, fontSize: 13, fontWeight: '600' },
+  scrollContent: { paddingBottom: 40 },
+  imageContainer: { width: '100%', backgroundColor: colors.card, marginBottom: spacing.md },
+  image: { width: '100%', aspectRatio: 9 / 16 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: spacing.md, marginBottom: spacing.md },
+  badge: { paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderRadius: radius.full },
+  badgeText: { fontSize: 12, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.8 },
+  date: { fontSize: 12, color: colors.textSecondary },
+  section: { paddingHorizontal: spacing.md, marginBottom: spacing.lg },
+  sectionLabel: { fontSize: 11, fontWeight: '700', color: colors.textSecondary, textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: spacing.sm },
+  summaryText: { ...typography.body, lineHeight: 26, color: colors.text },
+  tagsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  tag: { backgroundColor: colors.accentSoft, borderRadius: radius.full, paddingHorizontal: spacing.md, paddingVertical: spacing.xs, borderWidth: 1, borderColor: colors.accent + '33' },
+  tagText: { fontSize: 13, color: colors.accent, fontWeight: '600' },
+  extractedBox: { backgroundColor: colors.card, borderRadius: radius.md, padding: spacing.md, borderWidth: 1, borderColor: colors.cardBorder },
+  extractedText: { fontSize: 14, color: colors.textSecondary, lineHeight: 22 },
+});
+
+export default DetailScreen;
+
+
+app/src/components/ScreenshotCard.js:
+import React, { useRef } from 'react';
+import {
+  View,
+  Text,
+  Image,
+  TouchableOpacity,
+  StyleSheet,
+  Alert,
+  Animated,
+} from 'react-native';
+import { colors, getCategoryStyle, radius, spacing, typography } from '../theme';
+
+const IMAGE_BASE = 'http://192.168.1.38:8000/storage/';
+
+const ScreenshotCard = ({ item, onPress, onDelete }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const animateIn = () =>
+    Animated.spring(scale, { toValue: 0.97, useNativeDriver: true }).start();
+  const animateOut = () =>
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
+
+  const handleLongPress = () => {
+    Alert.alert(
+      'Delete Screenshot',
+      'Are you sure you want to delete this screenshot?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => onDelete(item.id),
+        },
+      ]
+    );
+  };
+
+  const catStyle = getCategoryStyle(item.category);
+
+  // Build image URI — handle both full URLs and filename-only values
+  const imageUri =
+    item.image_url?.startsWith('http')
+      ? item.image_url
+      : `${IMAGE_BASE}${item.image_url}`;
+
+  const formattedDate = item.created_at
+    ? new Date(item.created_at).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      })
+    : '';
+
+  return (
+    <Animated.View style={[styles.wrapper, { transform: [{ scale }] }]}>
+      <TouchableOpacity
+        style={styles.card}
+        activeOpacity={1}
+        onPress={onPress}
+        onLongPress={handleLongPress}
+        onPressIn={animateIn}
+        onPressOut={animateOut}
+        delayLongPress={500}
+      >
+        {/* Thumbnail */}
+        <View style={styles.thumbnailContainer}>
+          <Image
+            source={{ uri: imageUri }}
+            style={styles.thumbnail}
+            resizeMode="cover"
+          />
+          {/* Category badge overlaid on thumbnail */}
+          <View style={[styles.badge, { backgroundColor: catStyle.bg }]}>
+            <Text style={[styles.badgeText, { color: catStyle.text }]}>
+              {item.category || 'Other'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Content */}
+        <View style={styles.content}>
+          <Text style={styles.summary} numberOfLines={3}>
+            {item.summary || 'Processing…'}
+          </Text>
+
+          {/* Tags row */}
+          {item.tags && item.tags.length > 0 && (
+            <View style={styles.tagsRow}>
+              {(Array.isArray(item.tags)
+                ? item.tags
+                : item.tags.split(',')
+              )
+                .slice(0, 3)
+                .map((tag, i) => (
+                  <View key={i} style={styles.tag}>
+                    <Text style={styles.tagText}>
+                      {tag.trim().replace(/^#/, '')}
+                    </Text>
+                  </View>
+                ))}
+            </View>
+          )}
+
+          <Text style={styles.date}>{formattedDate}</Text>
+        </View>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const styles = StyleSheet.create({
+  wrapper: {
+    marginBottom: spacing.sm + 4,
+  },
+  card: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+  thumbnailContainer: {
+    width: 100,
+    height: 110,
+    position: 'relative',
+  },
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: colors.inputBg,
+  },
+  badge: {
+    position: 'absolute',
+    bottom: 6,
+    left: 6,
+    right: 6,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+  },
+  badgeText: {
+    ...typography.badge,
+    fontSize: 9,
+  },
+  content: {
+    flex: 1,
+    padding: spacing.md,
+    justifyContent: 'space-between',
+  },
+  summary: {
+    ...typography.body,
+    fontSize: 14,
+    lineHeight: 20,
+    color: colors.text,
+    flex: 1,
+  },
+  tagsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+    marginTop: spacing.xs,
+  },
+  tag: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.full,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  tagText: {
+    fontSize: 10,
+    color: colors.accent,
+    fontWeight: '600',
+  },
+  date: {
+    ...typography.caption,
+    marginTop: spacing.xs,
+  },
+});
+
+export default ScreenshotCard;
+
+
+app/src/components/CategoryPill.js:
+import React, { useRef } from 'react';
+import { TouchableOpacity, Text, StyleSheet, Animated } from 'react-native';
+import { colors, radius, spacing } from '../theme';
+
+const CategoryPill = ({ label, active, onPress }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const animateIn = () =>
+    Animated.spring(scale, { toValue: 0.93, useNativeDriver: true }).start();
+  const animateOut = () =>
+    Animated.spring(scale, { toValue: 1, useNativeDriver: true }).start();
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <TouchableOpacity
+        style={[styles.pill, active ? styles.pillActive : styles.pillInactive]}
+        onPress={onPress}
+        onPressIn={animateIn}
+        onPressOut={animateOut}
+        activeOpacity={1}
+      >
+        <Text style={[styles.label, active ? styles.labelActive : styles.labelInactive]}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const styles = StyleSheet.create({
+  pill: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs + 2,
+    borderRadius: radius.full,
+    borderWidth: 1,
+    marginRight: spacing.xs,
+  },
+  pillActive: {
+    backgroundColor: colors.accent,
+    borderColor: colors.accent,
+  },
+  pillInactive: {
+    backgroundColor: colors.pillInactive,
+    borderColor: colors.pillBorderInactive,
+  },
+  label: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  labelActive: {
+    color: '#fff',
+  },
+  labelInactive: {
+    color: colors.textSecondary,
+  },
+});
+
+export default CategoryPill;
+
+
+app/src/components/SearchBar.js:
+import React, { useRef, useEffect } from 'react';
+import {
+  View,
+  TextInput,
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+} from 'react-native';
+import { colors, radius, spacing } from '../theme';
+
+// Simple inline SVG-free icon using text characters
+const SearchIcon = () => (
+  <View style={styles.iconBox}>
+    <View style={styles.iconCircle} />
+    <View style={styles.iconHandle} />
+  </View>
+);
+
+const ClearIcon = ({ onPress }) => (
+  <TouchableOpacity onPress={onPress} style={styles.clearBtn}>
+    <View style={styles.clearBox}>
+      <View style={[styles.clearLine, { transform: [{ rotate: '45deg' }] }]} />
+      <View style={[styles.clearLine, { transform: [{ rotate: '-45deg' }] }]} />
+    </View>
+  </TouchableOpacity>
+);
+
+const SearchBar = ({ value, onChangeText, onClear, visible }) => {
+  const height = useRef(new Animated.Value(0)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.spring(height, {
+        toValue: visible ? 50 : 0,
+        useNativeDriver: false,
+        damping: 20,
+      }),
+      Animated.timing(opacity, {
+        toValue: visible ? 1 : 0,
+        duration: 200,
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [visible]);
+
+  return (
+    <Animated.View style={[styles.container, { height, opacity }]}>
+      <View style={styles.inputWrapper}>
+        <SearchIcon />
+        <TextInput
+          style={styles.input}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder="Search screenshots…"
+          placeholderTextColor={colors.textMuted}
+          returnKeyType="search"
+          autoCorrect={false}
+        />
+        {value.length > 0 && <ClearIcon onPress={onClear} />}
+      </View>
+    </Animated.View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    overflow: 'hidden',
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.xs,
+  },
+  inputWrapper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.inputBg,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm + 4,
+    height: 42,
+    borderWidth: 1,
+    borderColor: colors.cardBorder,
+  },
+  input: {
+    flex: 1,
+    color: colors.text,
+    fontSize: 15,
+    marginLeft: spacing.sm,
+    paddingVertical: 0,
+  },
+  clearBtn: {
+    padding: 4,
+  },
+  clearBox: {
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  clearLine: {
+    position: 'absolute',
+    width: 12,
+    height: 1.5,
+    backgroundColor: colors.textSecondary,
+    borderRadius: 2,
+  },
+  // Search icon made from primitives
+  iconBox: {
+    width: 16,
+    height: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  iconCircle: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: colors.textSecondary,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
+  iconHandle: {
+    width: 5,
+    height: 1.5,
+    backgroundColor: colors.textSecondary,
+    borderRadius: 2,
+    position: 'absolute',
+    bottom: 1,
+    right: 0,
+    transform: [{ rotate: '45deg' }],
+  },
+});
+
+export default SearchBar;
+
+
+app/src/components/FAB.js:
+import React, { useRef } from 'react';
+import {
+  TouchableOpacity,
+  StyleSheet,
+  Animated,
+  ActivityIndicator,
+  Text,
+} from 'react-native';
+import { colors, radius } from '../theme';
+
+const FAB = ({ onPress, loading }) => {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const animateIn = () =>
+    Animated.spring(scale, {
+      toValue: 0.9,
+      useNativeDriver: true,
+      damping: 15,
+    }).start();
+
+  const animateOut = () =>
+    Animated.spring(scale, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 12,
+    }).start();
+
+  return (
+    <Animated.View style={[styles.wrapper, { transform: [{ scale }] }]}>
+      <TouchableOpacity
+        style={styles.button}
+        onPress={loading ? null : onPress}
+        onPressIn={animateIn}
+        onPressOut={animateOut}
+        activeOpacity={1}
+      >
+        {loading ? (
+          <ActivityIndicator color="#fff" size="small" />
+        ) : (
+          <Text style={styles.plus}>+</Text>
+        )}
+      </TouchableOpacity>
+    </Animated.View>
+  );
+};
+
+const styles = StyleSheet.create({
+  wrapper: {
+    position: 'absolute',
+    bottom: 28,
+    right: 20,
+    // Shadow
+    shadowColor: colors.accent,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.5,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  button: {
+    width: 60,
+    height: 60,
+    borderRadius: radius.full,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  plus: {
+    fontSize: 32,
+    color: '#fff',
+    lineHeight: 36,
+    fontWeight: '300',
+  },
+});
+
+export default FAB;
+
+
+app/src/store/useScreenshotStore.js:
+import { create } from 'zustand';
+
+const useScreenshotStore = create((set) => ({
+  screenshots: [],
+  loading: false,
+  uploading: false,
+  setScreenshots: (screenshots) => set({ screenshots }),
+  addScreenshot: (screenshot) =>
+    set((state) => ({ screenshots: [screenshot, ...state.screenshots] })),
+  removeScreenshot: (id) =>
+    set((state) => ({
+      screenshots: state.screenshots.filter((s) => s.id !== id),
+    })),
+  setLoading: (loading) => set({ loading }),
+  setUploading: (uploading) => set({ uploading }),
+}));
+
+export default useScreenshotStore;
+
+app/src/services/api.js:
+import axios from 'axios';
+
+const api = axios.create({
+  baseURL: 'http://192.168.1.38:8000/api',
+  timeout: 120000,
+});
+
+export const uploadScreenshot = async (imageUri) => {
+  const formData = new FormData();
+  formData.append('image', {
+    uri: imageUri,
+    type: 'image/jpeg',
+    name: 'screenshot.jpg',
+  });
+
+  const response = await api.post('/screenshots', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+  return response.data;
+};
+
+export const getScreenshots = async () => {
+  const response = await api.get('/screenshots');
+  return response.data;
+};
+
+export const deleteScreenshot = async (id) => {
+  await api.delete(`/screenshots/${id}`);
+};
+
+export default api;
+
+app/src/utils/storage.js:
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const KEYS = {
+  HAS_ONBOARDED: '@screenshot_memory/has_onboarded_v5',
+  LAST_CHECKED: '@screenshot_memory/last_checked_v5',
+};
+
+export const getHasOnboarded = async () => {
+  try {
+    const val = await AsyncStorage.getItem(KEYS.HAS_ONBOARDED);
+    return val === 'true';
+  } catch {
+    return false;
+  }
+};
+
+export const setHasOnboarded = async () => {
+  try {
+    await AsyncStorage.setItem(KEYS.HAS_ONBOARDED, 'true');
+  } catch {}
+};
+
+export const getLastChecked = async () => {
+  try {
+    const val = await AsyncStorage.getItem(KEYS.LAST_CHECKED);
+    return val ? parseInt(val, 10) : 0;
+  } catch {
+    return 0;
+  }
+};
+
+export const setLastChecked = async (timestamp) => {
+  try {
+    await AsyncStorage.setItem(KEYS.LAST_CHECKED, String(timestamp));
+  } catch {}
+};
+
+
+app/src/tasks/screenshotWatcher.js:
+import * as BackgroundFetch from 'expo-background-fetch';
+import * as TaskManager from 'expo-task-manager';
+import * as MediaLibrary from 'expo-media-library';
+import { uploadScreenshot } from '../services/api';
+import { getLastChecked, setLastChecked } from '../utils/storage';
+
+export const SCREENSHOT_TASK = 'SCREENSHOT_WATCHER_TASK';
+
+// Define the task — must be called at the top level (module scope)
+TaskManager.defineTask(SCREENSHOT_TASK, async () => {
+  try {
+    const { status } = await MediaLibrary.getPermissionsAsync();
+    if (status !== 'granted') return BackgroundFetch.BackgroundFetchResult.NoData;
+
+    // Find the Screenshots album
+    const album = await MediaLibrary.getAlbumAsync('Screenshots');
+    if (!album) return BackgroundFetch.BackgroundFetchResult.NoData;
+
+    const lastChecked = await getLastChecked();
+    const now = Date.now();
+
+    const { assets } = await MediaLibrary.getAssetsAsync({
+      album,
+      mediaType: MediaLibrary.MediaType.photo,
+      sortBy: [[MediaLibrary.SortBy.creationTime, false]],
+      first: 20,
+    });
+
+    const newAssets = assets.filter(
+      (a) => a.creationTime * 1000 > lastChecked
+    );
+
+    if (newAssets.length === 0) {
+      return BackgroundFetch.BackgroundFetchResult.NoData;
+    }
+
+    for (const asset of newAssets) {
+      try {
+        const info = await MediaLibrary.getAssetInfoAsync(asset);
+        await uploadScreenshot(info.localUri || info.uri);
+      } catch (e) {
+        console.log('[ScreenshotWatcher] Upload error:', e.message);
+      }
+    }
+
+    await setLastChecked(now);
+    return BackgroundFetch.BackgroundFetchResult.NewData;
+  } catch (e) {
+    console.log('[ScreenshotWatcher] Task error:', e.message);
+    return BackgroundFetch.BackgroundFetchResult.Failed;
+  }
+});
+
+export const registerScreenshotWatcher = async () => {
+  try {
+    const { status } = await MediaLibrary.getPermissionsAsync();
+    if (status !== 'granted') return;
+
+    await BackgroundFetch.registerTaskAsync(SCREENSHOT_TASK, {
+      minimumInterval: 15 * 60, // 15 minutes (Android minimum)
+      stopOnTerminate: false,
+      startOnBoot: true,
+    });
+    console.log('[ScreenshotWatcher] Registered');
+  } catch (e) {
+    console.log('[ScreenshotWatcher] Registration error:', e.message);
+  }
+};
+
+

@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { TouchableOpacity, Text, StyleSheet, Animated } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 
 const CategoryPill = ({ label, active, onPress }) => {
   const scale = useRef(new Animated.Value(1)).current;
@@ -29,11 +29,11 @@ const CategoryPill = ({ label, active, onPress }) => {
 
 const styles = StyleSheet.create({
   pill: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs + 2,
+    paddingHorizontal: spacing.md + 4,
+    paddingVertical: spacing.unit * 2,
     borderRadius: radius.full,
     borderWidth: 1,
-    marginRight: spacing.xs,
+    marginRight: spacing.unit * 2,
   },
   pillActive: {
     backgroundColor: colors.accent,
@@ -44,11 +44,13 @@ const styles = StyleSheet.create({
     borderColor: colors.pillBorderInactive,
   },
   label: {
-    fontSize: 13,
-    fontWeight: '600',
+    fontSize: typography.labelCaps.fontSize,
+    fontFamily: typography.labelCaps.fontFamily,
+    letterSpacing: typography.labelCaps.letterSpacing,
+    textTransform: 'uppercase',
   },
   labelActive: {
-    color: '#fff',
+    color: colors.onAccent,
   },
   labelInactive: {
     color: colors.textSecondary,

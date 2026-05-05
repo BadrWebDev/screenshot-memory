@@ -12,6 +12,7 @@ class Screenshot extends Model
     protected $fillable = [
         'id',
         'image_url',
+        'image_hash',
         'summary',
         'category',
         'extracted_text',

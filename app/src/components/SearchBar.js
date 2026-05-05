@@ -6,7 +6,7 @@ import {
   StyleSheet,
   Animated,
 } from 'react-native';
-import { colors, radius, spacing } from '../theme';
+import { colors, radius, spacing, typography } from '../theme';
 
 // Simple inline SVG-free icon using text characters
 const SearchIcon = () => (
@@ -26,13 +26,13 @@ const ClearIcon = ({ onPress }) => (
 );
 
 const SearchBar = ({ value, onChangeText, onClear, visible }) => {
-  const height = useRef(new Animated.Value(0)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
+  const height = useRef(new Animated.Value(visible ? 58 : 0)).current;
+  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
 
   useEffect(() => {
     Animated.parallel([
       Animated.spring(height, {
-        toValue: visible ? 50 : 0,
+        toValue: visible ? 58 : 0,
         useNativeDriver: false,
         damping: 20,
       }),
@@ -52,7 +52,7 @@ const SearchBar = ({ value, onChangeText, onClear, visible }) => {
           style={styles.input}
           value={value}
           onChangeText={onChangeText}
-          placeholder="Search screenshots…"
+          placeholder="Search your memories..."
           placeholderTextColor={colors.textMuted}
           returnKeyType="search"
           autoCorrect={false}
@@ -66,32 +66,33 @@ const SearchBar = ({ value, onChangeText, onClear, visible }) => {
 const styles = StyleSheet.create({
   container: {
     overflow: 'hidden',
-    paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.marginMain,
+    paddingBottom: spacing.sm,
   },
   inputWrapper: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.inputBg,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.sm + 4,
-    height: 42,
+    borderRadius: radius.full,
+    paddingHorizontal: spacing.md,
+    height: 52,
     borderWidth: 1,
     borderColor: colors.cardBorder,
   },
   input: {
     flex: 1,
     color: colors.text,
-    fontSize: 15,
+    fontSize: typography.bodySm.fontSize,
+    fontFamily: typography.bodySm.fontFamily,
     marginLeft: spacing.sm,
     paddingVertical: 0,
   },
   clearBtn: {
-    padding: 4,
+    padding: 6,
   },
   clearBox: {
-    width: 16,
-    height: 16,
+    width: 18,
+    height: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -104,25 +105,25 @@ const styles = StyleSheet.create({
   },
   // Search icon made from primitives
   iconBox: {
-    width: 16,
-    height: 16,
+    width: 18,
+    height: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },
   iconCircle: {
-    width: 10,
-    height: 10,
-    borderRadius: 5,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
     borderWidth: 1.5,
-    borderColor: colors.textSecondary,
+    borderColor: colors.textMuted,
     position: 'absolute',
     top: 0,
     left: 0,
   },
   iconHandle: {
-    width: 5,
+    width: 6,
     height: 1.5,
-    backgroundColor: colors.textSecondary,
+    backgroundColor: colors.textMuted,
     borderRadius: 2,
     position: 'absolute',
     bottom: 1,

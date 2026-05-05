@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: 'http://192.168.1.38:8000/api',
+  baseURL: 'http://192.168.1.39:8000/api',
   timeout: 120000,
 });
 
@@ -27,6 +27,20 @@ export const getScreenshots = async () => {
 
 export const deleteScreenshot = async (id) => {
   await api.delete(`/screenshots/${id}`);
+};
+
+export const deleteAllScreenshots = async () => {
+  await api.delete('/screenshots/all');
+};
+
+export const updateScreenshot = async (id, payload) => {
+  const response = await api.patch(`/screenshots/${id}`, payload);
+  return response.data;
+};
+
+export const reanalyzeScreenshot = async (id) => {
+  const response = await api.post(`/screenshots/${id}/reanalyze`);
+  return response.data;
 };
 
 export default api;
