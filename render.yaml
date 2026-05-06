@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: screenshot-memory-api
+    runtime: docker
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: false
+      - key: APP_KEY
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
